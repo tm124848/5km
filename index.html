@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+<!-- PWA: iOS -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="5K Log">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%2309090b'/%3E%3Ctext x='256' y='200' font-family='Arial Black,Arial' font-weight='900' font-size='180' fill='%23e83a3a' text-anchor='middle'%3E5K%3C/text%3E%3Ctext x='256' y='340' font-family='Arial' font-weight='700' font-size='72' fill='%23ffffff' text-anchor='middle' letter-spacing='4'%3ELOG%3C/text%3E%3C/svg%3E">
+
+<!-- PWA: Android / Chrome manifest embedded as data URI -->
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%225K+Training+Log%22%2C%22short_name%22%3A%225K+Log%22%2C%22description%22%3A%2210-week+5km+training+tracker%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22orientation%22%3A%22portrait%22%2C%22background_color%22%3A%22%2309090b%22%2C%22theme_color%22%3A%22%2309090b%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'+viewBox%3D'0+0+512+512'%253E%253Crect+width%3D'512'+height%3D'512'+rx%3D'100'+fill%3D'%252309090b'%2F%253E%253Ctext+x%3D'256'+y%3D'200'+font-family%3D'Arial+Black%2CArial'+font-weight%3D'900'+font-size%3D'180'+fill%3D'%2523e83a3a'+text-anchor%3D'middle'%253E5K%253C%2Ftext%253E%253Ctext+x%3D'256'+y%3D'340'+font-family%3D'Arial'+font-weight%3D'700'+font-size%3D'72'+fill%3D'%2523ffffff'+text-anchor%3D'middle'+letter-spacing%3D'4'%253ELOG%253C%2Ftext%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22any%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+
+<meta name="theme-color" content="#09090b">
+<meta name="mobile-web-app-capable" content="yes">
+<title>5K Training Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+<script>
+// Register service worker via blob so the app qualifies as installable PWA
+// (works when served over HTTPS e.g. via Netlify — see instructions in app)
+if ('serviceWorker' in navigator) {
+  const sw = `
+    const CACHE = '5k-log-v1';
+    const ASSETS = [self.location.href];
+    self.addEventListener('install', e => {
+      e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(()=>{}));
+      self.skipWaiting();
+    });
+    self.addEventListener('activate', e => {
+      e.waitUntil(clients.claim());
+    });
+    self.addEventListener('fetch', e => {
+      e.respondWith(
+        caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match(e.request)))
+      );
+    });
+  `;
+  const blob = new Blob([sw], {type: 'application/javascript'});
+  const url  = URL.createObjectURL(blob);
+  navigator.serviceWorker.register(url).catch(() => {});
+}
+</script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:#09090b;height:100%;}
+  ::-webkit-scrollbar{width:3px;}
+  ::-webkit-scrollbar-track{background:#09090b;}
+  ::-webkit-scrollbar-thumb{background:#1a1a22;}
+  input:focus{outline:1px solid #2a2a38 !important;}
+  button{font-family:'Syne',sans-serif;transition:opacity 0.15s;}
+  button:disabled{opacity:0.3;cursor:not-allowed;}
+  .wb:hover{background:#141418 !important;}
+  .wb.on{background:#e83a3a !important;color:#fff !important;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── STORAGE (localStorage) ────────────────────────────────────────────────────
+const SK = "5k_tracker_v4";
+function loadData() {
+  try { const v = localStorage.getItem(SK); return v ? JSON.parse(v) : {}; }
+  catch { return {}; }
+}
+function saveData(d) {
+  try { localStorage.setItem(SK, JSON.stringify(d)); } catch {}
+}
+
+// ── PLAN DATA ─────────────────────────────────────────────────────────────────
+const PLAN = [
+  { weeks:[1,2], phase:"PHASE 1", phaseLabel:"Base & Speed Introduction",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"EASY RUN", intensity:"easy", title:"Easy Aerobic Run", duration:"30 min",
+        basePaceTarget:"6:00–6:30", basePaceMid:390,
+        details:["Truly conversational — hold a full sentence throughout","Target 6:00–6:30/km. No ego about the number","Focus on relaxed breathing and upright posture","Builds aerobic base and conditions tendons"],
+        cues:["Tall spine","Relaxed shoulders","Light foot strike"],
+        garmin:{ name:"5K Wk1-2 Easy Run", steps:[
+          { type:"warmup",  label:"Warm Up",  value:"Open",  note:"Easy jog — no target, just loosen up" },
+          { type:"run",     label:"Run",      value:"30:00", pace:"6:00–6:30 /km", note:"HR Zone 2 — conversational effort" },
+          { type:"cooldown",label:"Cool Down",value:"Open",  note:"Walk until HR drops below 120" },
+        ]}},
+      { id:"s2", day:"SESSION 2", type:"STRIDES", intensity:"moderate", title:"Strides Session", duration:"~25 min",
+        basePaceTarget:"~5k effort", basePaceMid:300,
+        details:["Warm-up: 10 min easy jog","Main: 6 × 100m accelerations at 5k effort","Full walk-back recovery between each rep","Focus: high cadence 170+ spm, quick foot strike, forward lean"],
+        cues:["Drive elbows back","Heel to glute","Land under hips"],
+        garmin:{ name:"5K Wk1-2 Strides", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog", note:"Comfortable, no effort target" },
+          { type:"repeat", label:"Repeat",  count:6, children:[
+            { type:"run",     label:"Stride",  value:"0.10 km", pace:"Fast — 5k effort", note:"Accelerate smoothly, don't sprint" },
+            { type:"recover", label:"Recover", value:"Lap btn", note:"Walk back to start — full recovery" },
+          ]},
+          { type:"cooldown", label:"Cool Down", value:"5:00", pace:"Easy jog", note:"" },
+        ]}},
+    ],
+    optional:{ id:"opt", day:"OPTIONAL", type:"RECOVERY", intensity:"optional", title:"Easy Recovery Run", duration:"20–25 min",
+      basePaceTarget:"6:10–6:30", basePaceMid:400,
+      details:["Only if legs feel genuinely fresh","Same effort as Session 1, no harder","If calf/Achilles tightness: swap for walking + stretching"],
+      cues:["Same easy effort as S1"],
+      garmin:{ name:"5K Recovery Run", steps:[
+        { type:"warmup",  label:"Warm Up",  value:"Open",  note:"Until comfortable" },
+        { type:"run",     label:"Run",      value:"20:00", pace:"6:10–6:30 /km", note:"Zone 2 — if it feels hard, slow down" },
+        { type:"cooldown",label:"Cool Down",value:"Open",  note:"Walk to finish" },
+      ]}}},
+
+  { weeks:[3,4], phase:"PHASE 1", phaseLabel:"Threshold Introduction",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"THRESHOLD", intensity:"hard", title:"Threshold Intervals", duration:"~35 min",
+        basePaceTarget:"5:05–5:10", basePaceMid:308,
+        details:["Warm-up: 10 min easy jog","Main: 3 × 6 min at comfortably hard (5:05–5:10/km)","Recovery: 2 min easy jog between blocks","Feel: 7/10 — controlled, sustainable, slightly uncomfortable","Cool-down: 5 min easy"],
+        cues:["Controlled breathing","Chin level","Steady rhythm"],
+        garmin:{ name:"5K Wk3-4 Threshold", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog",     note:"Fully loose before the main set" },
+          { type:"repeat", label:"Repeat",  count:3, children:[
+            { type:"run",     label:"Threshold",value:"6:00", pace:"5:05–5:10 /km",note:"7/10 effort — controlled, not maxed" },
+            { type:"recover", label:"Recover",  value:"2:00", pace:"Easy jog",     note:"Slow down but keep moving" },
+          ]},
+          { type:"cooldown",label:"Cool Down",value:"5:00",pace:"Easy jog",note:"" },
+        ]}},
+      { id:"s2", day:"SESSION 2", type:"EASY + STRIDES", intensity:"easy", title:"Base Run + Finishing Strides", duration:"~45 min",
+        basePaceTarget:"6:00–6:20", basePaceMid:380,
+        details:["Main: 35 min easy run at 6:00–6:20/km","Finish: 6 × 100m strides at 5k effort","Strides train fast running while fatigued — key 5k skill","Full walk recovery between strides"],
+        cues:["Stay easy on the base","Accelerate smoothly into strides"],
+        garmin:{ name:"5K Wk3-4 Base+Strides", steps:[
+          { type:"run",    label:"Easy Run", value:"35:00",  pace:"6:00–6:20 /km", note:"Conversational — this is base building" },
+          { type:"repeat", label:"Repeat",   count:6, children:[
+            { type:"run",     label:"Stride",  value:"0.10 km",pace:"Fast — 5k effort",note:"Quick turnover, relaxed arms" },
+            { type:"recover", label:"Recover", value:"Lap btn",note:"Full walk recovery" },
+          ]},
+        ]}},
+    ],
+    optional:{ id:"opt", day:"OPTIONAL", type:"RECOVERY", intensity:"optional", title:"Easy Recovery Run", duration:"25 min",
+      basePaceTarget:"6:10–6:30", basePaceMid:400,
+      details:["Light effort only","Review hydration if cramping on easy runs","Can swap for 25 min brisk walk if sore"],
+      cues:["Easy only","Check hydration"],
+      garmin:{ name:"5K Recovery Run", steps:[
+        { type:"run", label:"Easy Run", value:"25:00", pace:"6:10–6:30 /km", note:"Zone 2 only" },
+      ]}}},
+
+  { weeks:[5], phase:"PHASE 1", phaseLabel:"Down Week — Active Recovery",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"EASY RUN", intensity:"easy", title:"Easy Run", duration:"25 min",
+        basePaceTarget:"6:10–6:30", basePaceMid:385,
+        details:["Reduced volume intentionally — body adapts during recovery","Easy pace only, no data pressure","Enjoy it"],
+        cues:["Pure easy effort"],
+        garmin:{ name:"5K Wk5 Easy Run", steps:[
+          { type:"run", label:"Easy Run", value:"25:00", pace:"6:10–6:30 /km", note:"No pressure — enjoy the down week" },
+        ]}},
+      { id:"s2", day:"SESSION 2", type:"TIME TRIAL", intensity:"moderate", title:"4×1km @ 5:00/km", duration:"~35 min",
+        basePaceTarget:"5:00–5:05", basePaceMid:303,
+        details:["Warm-up: 10 min easy jog","Main: 4 × 1km at 5:00–5:05/km","Recovery: 90 sec easy between reps","Purpose: data collection not racing — stay controlled"],
+        cues:["Data not racing","Consistent splits"],
+        garmin:{ name:"5K Wk5 Time Trial 4×1km", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog", note:"" },
+          { type:"repeat", label:"Repeat",  count:4, children:[
+            { type:"run",     label:"1km Run", value:"1.00 km", pace:"5:00–5:05 /km", note:"Controlled — this is data collection" },
+            { type:"recover", label:"Recover", value:"1:30",    pace:"Easy jog",       note:"Keep moving, don't stop" },
+          ]},
+          { type:"cooldown",label:"Cool Down",value:"5:00",pace:"Easy jog",note:"" },
+        ]}},
+    ],
+    optional:null },
+
+  { weeks:[6,7], phase:"PHASE 2", phaseLabel:"Race-Specific Conditioning",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"INTERVALS", intensity:"hard", title:"5×1km @ Goal Pace", duration:"~40 min",
+        basePaceTarget:"4:45–4:50", basePaceMid:288,
+        details:["Warm-up: 10 min easy + 2 strides","Main: 5 × 1km at goal pace (4:45–4:50/km)","Recovery: 90 sec easy jog between reps","Week 6: 4 reps if 5 is too much. Week 7: all 5","THE most important session for 24:00"],
+        cues:["First rep controlled","Goal pace — not faster","Form check at 800m"],
+        garmin:{ name:"5K Wk6-7 Goal Pace 5×1km", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog", note:"Add 2 × 100m strides at end of warmup" },
+          { type:"repeat", label:"Repeat",  count:5, children:[
+            { type:"run",     label:"1km Interval",value:"1.00 km",pace:"4:45–4:50 /km",note:"Goal pace — first rep should feel controlled" },
+            { type:"recover", label:"Recover",     value:"1:30",   pace:"Easy jog",     note:"Active recovery — don't stop" },
+          ]},
+          { type:"cooldown",label:"Cool Down",value:"5:00",pace:"Easy jog",note:"" },
+        ]}},
+      { id:"s2", day:"SESSION 2", type:"TEMPO", intensity:"hard", title:"Continuous Tempo Run", duration:"~35 min",
+        basePaceTarget:"5:00–5:05", basePaceMid:303,
+        details:["Warm-up: 10 min easy jog","Main: 20 min UNBROKEN at threshold (5:05/km)","No rest breaks — sustain the metabolic state","Cool-down: 5 min easy"],
+        cues:["Rhythm over pace","At 15min: form not speed"],
+        garmin:{ name:"5K Wk6-7 Tempo 20min", steps:[
+          { type:"warmup",  label:"Warm Up",  value:"10:00", pace:"Easy jog", note:"" },
+          { type:"run",     label:"Tempo",    value:"20:00", pace:"5:05 /km", note:"Unbroken — no stopping or slowing. Rhythm." },
+          { type:"cooldown",label:"Cool Down",value:"5:00",  pace:"Easy jog", note:"" },
+        ]}},
+    ],
+    optional:{ id:"opt", day:"OPTIONAL", type:"EASY RUN", intensity:"optional", title:"Easy Recovery Run", duration:"30 min",
+      basePaceTarget:"6:10–6:30", basePaceMid:400,
+      details:["No strides — two hard sessions need priority","Blood flow and habit maintenance only","Skip without guilt if legs are heavy"],
+      cues:["Easy only","Skip if heavy legs"],
+      garmin:{ name:"5K Recovery Run", steps:[
+        { type:"run", label:"Easy Run", value:"30:00", pace:"6:10–6:30 /km", note:"Zone 2. Skip entirely if heavy legs." },
+      ]}}},
+
+  { weeks:[8,9], phase:"PHASE 2", phaseLabel:"Race Simulation",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"RACE SIM", intensity:"hard", title:"5km Race Simulation", duration:"~35 min",
+        basePaceTarget:"4:48–4:50", basePaceMid:289,
+        details:["Full pre-run protocol: warm-up 12 min, electrolytes 45 min before","Rule: every km within 5 sec of 4:50/km","Target: Km1 4:50 | Km2 4:50 | Km3 4:50 | Km4 4:50 | Km5 4:50","No heroic opening km — even execution is the point"],
+        cues:["Even splits above all","If km1 < 4:45, ease back","Race won in km 4 & 5"],
+        garmin:{ name:"5K Wk8-9 Race Sim", steps:[
+          { type:"warmup",  label:"Warm Up",     value:"12:00",   pace:"Easy jog",      note:"Longer warmup — this is race rehearsal" },
+          { type:"run",     label:"5km Race Sim",value:"5.00 km", pace:"4:48–4:50 /km", note:"Set pace alert: min 4:45, max 4:55 — stay in that window every km" },
+          { type:"cooldown",label:"Cool Down",   value:"Open",    note:"Easy walk/jog until recovered" },
+        ]}},
+      { id:"s2", day:"SESSION 2", type:"INTERVALS", intensity:"hard", title:"3×2km Intervals", duration:"~40 min",
+        basePaceTarget:"5:00–5:05", basePaceMid:303,
+        details:["Warm-up: 10 min easy","Main: 3 × 2km at 5:00/km","Recovery: 2 min easy between reps","Bridges gap between 1km reps and full race"],
+        cues:["Form over pace","Economy through km 2"],
+        garmin:{ name:"5K Wk8-9 3×2km", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog", note:"" },
+          { type:"repeat", label:"Repeat",  count:3, children:[
+            { type:"run",     label:"2km Run", value:"2.00 km", pace:"5:00–5:05 /km", note:"Focus on form economy through the second km" },
+            { type:"recover", label:"Recover", value:"2:00",    pace:"Easy jog",       note:"" },
+          ]},
+          { type:"cooldown",label:"Cool Down",value:"5:00",pace:"Easy jog",note:"" },
+        ]}},
+    ],
+    optional:{ id:"opt", day:"OPTIONAL", type:"STRENGTH", intensity:"optional", title:"Easy Run + Strength Work", duration:"~40 min",
+      basePaceTarget:"Easy jog", basePaceMid:400,
+      details:["20 min easy jog","Calf raises 3×20 | Single-leg calf raises 3×12 each","Hip bridges 3×15 | Single-leg deadlifts 3×10 each","Directly addresses your cramp risk from Garmin data"],
+      cues:["Targets your weak points"],
+      garmin:{ name:"5K Easy Jog", steps:[
+        { type:"run", label:"Easy Jog", value:"20:00", pace:"Easy", note:"Keep it easy — strength work follows" },
+      ]}}},
+
+  { weeks:[10], phase:"PHASE 2", phaseLabel:"Race Week — Taper & Execute",
+    sessions:[
+      { id:"s1", day:"SESSION 1", type:"SHARPENER", intensity:"moderate", title:"Short Race Sharpener", duration:"~30 min",
+        basePaceTarget:"4:48", basePaceMid:288,
+        details:["Run this 4 days before your race attempt","Warm-up: 10 min easy","Main: 3 × 1km at exact goal pace (4:48/km)","Recovery: 2 min. Cool-down 10 min. No sessions after this."],
+        cues:["Remind legs what 4:48 feels like","Confident only"],
+        garmin:{ name:"5K Wk10 Sharpener", steps:[
+          { type:"warmup", label:"Warm Up", value:"10:00", pace:"Easy jog", note:"" },
+          { type:"repeat", label:"Repeat",  count:3, children:[
+            { type:"run",     label:"1km Sharp",value:"1.00 km",pace:"4:48 /km",note:"Exact goal pace — controlled confidence" },
+            { type:"recover", label:"Recover",  value:"2:00",   pace:"Easy jog",note:"" },
+          ]},
+          { type:"cooldown",label:"Cool Down",value:"10:00",pace:"Easy jog",note:"Longer cool-down — protect the legs" },
+        ]}},
+      { id:"s2", day:"RACE DAY", type:"RACE", intensity:"race", title:"5km Attempt — Goal 24:00", duration:"~24:00",
+        basePaceTarget:"4:48", basePaceMid:288,
+        details:["Electrolytes 45 min before. Full 12 min warm-up.","Target: Km1 4:50 | Km2 4:49 | Km3 4:48 | Km4 4:47 | Km5 4:46","Slight negative split — get stronger as you go","If km 1 < 4:45: consciously ease. Race won in km 4 and 5."],
+        cues:["Patience km 1–2","Build km 3–4","Empty the tank km 5"],
+        garmin:{ name:"5K Race Day", steps:[
+          { type:"warmup",  label:"Warm Up",  value:"12:00",   pace:"Easy jog", note:"Non-negotiable — do not skip" },
+          { type:"run",     label:"5km Race", value:"5.00 km", pace:"4:48 /km", note:"Set pace alert: min 4:44, max 4:52. Auto-lap every 1km." },
+          { type:"cooldown",label:"Cool Down",value:"Open",    note:"Walk. You've earned it." },
+        ]}},
+    ],
+    optional:null },
+];
+
+const WEEK_PLAN = {};
+PLAN.forEach(b => b.weeks.forEach(w => { WEEK_PLAN[w] = b; }));
+
+const INT = {
+  easy:     { dot:"#3db87a", label:"EASY",     bg:"rgba(61,184,122,0.1)",  text:"#3db87a" },
+  moderate: { dot:"#d4a843", label:"MODERATE", bg:"rgba(212,168,67,0.1)",  text:"#d4a843" },
+  hard:     { dot:"#e83a3a", label:"HARD",     bg:"rgba(232,58,58,0.1)",   text:"#e83a3a" },
+  race:     { dot:"#ff6b35", label:"RACE DAY", bg:"rgba(255,107,53,0.12)", text:"#ff6b35" },
+  optional: { dot:"#4a9eff", label:"OPTIONAL", bg:"rgba(74,158,255,0.08)", text:"#4a9eff" },
+};
+const STEP_C = {
+  warmup:  { bg:"rgba(74,158,255,0.1)",  border:"#4a9eff", text:"#4a9eff", icon:"▷" },
+  run:     { bg:"rgba(232,58,58,0.08)",  border:"#e83a3a", text:"#e83a3a", icon:"▶" },
+  recover: { bg:"rgba(61,184,122,0.08)", border:"#3db87a", text:"#3db87a", icon:"◎" },
+  cooldown:{ bg:"rgba(74,158,255,0.06)", border:"#4a9eff", text:"#7ab8ff", icon:"▽" },
+  repeat:  { bg:"rgba(212,168,67,0.06)", border:"#d4a843", text:"#d4a843", icon:"↺" },
+};
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function parseSecs(str) {
+  if (!str) return null;
+  const m = str.replace(/\/km.*/,"").trim().match(/^(\d+):(\d+)$/);
+  return m ? +m[1]*60 + +m[2] : null;
+}
+function secsToStr(s) { return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`; }
+
+function adaptPaceLabel(target, delta) {
+  if (!target || target==="Easy jog" || target.startsWith("~") || Math.abs(delta)<3) return { label:target, shifted:false };
+  const parts = target.split("–").map(p=>p.trim());
+  let anyShifted = false;
+  const shifted = parts.map(p => {
+    const s = parseSecs(p);
+    if (s) { anyShifted=true; return secsToStr(Math.max(240, s+delta)); }
+    return p;
+  });
+  return { label:shifted.join("–"), shifted:anyShifted };
+}
+
+function calcAdapt(logs, weekNum) {
+  const prev = weekNum-1;
+  if (prev<1) return null;
+  const b = WEEK_PLAN[prev]; if (!b) return null;
+  const samples = [];
+  b.sessions.forEach(s => {
+    const log = logs[`w${prev}_${s.id}`]||{};
+    if (!log.done) return;
+    const lp = parseSecs(log.pace);
+    samples.push({ delta:lp&&s.basePaceMid?lp-s.basePaceMid:null, rpe:log.rpe||null });
+  });
+  if (!samples.length) return null;
+  const rpes = samples.map(s=>s.rpe).filter(Boolean);
+  const avgRpe = rpes.length ? rpes.reduce((a,b)=>a+b,0)/rpes.length : null;
+  const deltas = samples.map(s=>s.delta).filter(v=>v!==null);
+  const avgDelta = deltas.length ? deltas.reduce((a,b)=>a+b,0)/deltas.length : null;
+  if ((avgRpe!==null&&avgRpe>=8.5)||(avgDelta!==null&&avgDelta>20)) {
+    const adj = avgDelta>30?15:10;
+    const why = avgRpe>=8.5 ? `Last week avg effort ${avgRpe.toFixed(1)}/10` : `Pace was ~${Math.round(avgDelta)}s/km off target`;
+    return { mode:"ease", adj, why };
+  }
+  if (avgRpe!==null&&avgRpe<=5.5&&(avgDelta===null||avgDelta<=5))
+    return { mode:"push", adj:-5, why:`Last week felt comfortable (${avgRpe.toFixed(1)}/10)` };
+  return { mode:"normal", adj:0, why:null };
+}
+
+function calcStreak(logs) {
+  let lastActive = 0;
+  for (let w=10; w>=1; w--) {
+    const b=WEEK_PLAN[w]; if(!b) continue;
+    if (b.sessions.some(s=>logs[`w${w}_${s.id}`]?.done)) { lastActive=w; break; }
+  }
+  if (!lastActive) return 0;
+  let streak = 0;
+  for (let w=lastActive; w>=1; w--) {
+    const b=WEEK_PLAN[w]; if(!b) continue;
+    if (b.sessions.every(s=>logs[`w${w}_${s.id}`]?.done)) streak++;
+    else break;
+  }
+  return streak;
+}
+
+// ── COMPONENTS ────────────────────────────────────────────────────────────────
+function Pip({ type }) {
+  const s = INT[type];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,background:s.bg,color:s.text,fontSize:8,fontWeight:700,letterSpacing:"1.5px",padding:"2px 7px",borderRadius:2}}>
+    <span style={{width:4,height:4,borderRadius:"50%",background:s.dot}}/>{s.label}
+  </span>;
+}
+
+function RpeRow({ value, onChange }) {
+  const col = v => v<=3?"#3db87a":v<=6?"#d4a843":"#e83a3a";
+  const lbl = {1:"Very Easy",2:"Easy",3:"Moderate",4:"Somewhat Hard",5:"Hard",6:"Hard+",7:"Very Hard",8:"Very Very Hard",9:"Max",10:"All Out"};
+  return (
+    <div>
+      <div style={{fontSize:9,color:"#8888a0",letterSpacing:"1.5px",fontFamily:"monospace",marginBottom:7}}>
+        EFFORT RATING (RPE)
+        {value && <span style={{color:col(value),marginLeft:8}}>{value}/10 — {lbl[value]}</span>}
+      </div>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+        {[1,2,3,4,5,6,7,8,9,10].map(n=>(
+          <button key={n} onClick={()=>onChange(value===n?null:n)} style={{
+            width:28,height:28,borderRadius:3,fontFamily:"monospace",fontSize:11,fontWeight:700,cursor:"pointer",
+            background:value===n?col(n):"#111116",border:value===n?"none":"1px solid #1e1e26",
+            color:value===n?"#09090b":col(n)
+          }}>{n}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PreChecklist({ log, onLog, logKey }) {
+  const checks = log.checks||{};
+  const items = [
+    {key:"electrolytes",label:"Electrolytes",sub:"45min before",icon:"💧"},
+    {key:"warmup",label:"Warm-up done",sub:"8–12 min",icon:"🏃"},
+    {key:"meal",label:"Meal 2h+ ago",sub:"no heavy food",icon:"🍽"},
+  ];
+  const allDone = items.every(i=>checks[i.key]);
+  return (
+    <div style={{marginBottom:14,padding:"10px 12px",
+      background:allDone?"rgba(61,184,122,0.05)":"rgba(232,58,58,0.04)",
+      border:`1px solid ${allDone?"rgba(61,184,122,0.2)":"rgba(232,58,58,0.1)"}`,borderRadius:4}}>
+      <div style={{fontSize:9,color:"#8888a0",letterSpacing:"1.5px",fontFamily:"monospace",marginBottom:8}}>
+        PRE-SESSION CHECKLIST
+        {allDone&&<span style={{color:"#3db87a",marginLeft:8}}>— all clear ✓</span>}
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {items.map(item=>(
+          <button key={item.key} onClick={()=>onLog(logKey,{...log,checks:{...checks,[item.key]:!checks[item.key]}})} style={{
+            display:"flex",alignItems:"center",gap:6,cursor:"pointer",
+            background:checks[item.key]?"rgba(61,184,122,0.1)":"#0f0f14",
+            border:`1px solid ${checks[item.key]?"#3db87a":"#1e1e26"}`,
+            borderRadius:4,padding:"6px 10px"
+          }}>
+            <span style={{fontSize:13}}>{item.icon}</span>
+            <div style={{textAlign:"left"}}>
+              <div style={{fontSize:11,fontWeight:600,color:checks[item.key]?"#3db87a":"#b0b0c8",fontFamily:"monospace",lineHeight:1.2}}>
+                {item.label}{checks[item.key]&&" ✓"}
+              </div>
+              <div style={{fontSize:9,color:checks[item.key]?"#3db87a":"#505060",fontFamily:"monospace",lineHeight:1}}>{item.sub}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdaptNotice({ adapt }) {
+  if (!adapt||adapt.mode==="normal"||!adapt.why) return null;
+  const ease = adapt.mode==="ease";
+  return (
+    <div style={{display:"flex",alignItems:"flex-start",gap:10,
+      background:ease?"rgba(212,168,67,0.07)":"rgba(74,158,255,0.07)",
+      border:`1px solid ${ease?"rgba(212,168,67,0.25)":"rgba(74,158,255,0.25)"}`,
+      borderRadius:4,padding:"10px 12px",marginBottom:14}}>
+      <span style={{fontSize:16,lineHeight:1,color:ease?"#d4a843":"#4a9eff",flexShrink:0}}>{ease?"↓":"↑"}</span>
+      <div>
+        <div style={{fontSize:12,fontWeight:700,color:ease?"#d4a843":"#4a9eff",marginBottom:3}}>
+          {ease?`Targets eased +${adapt.adj}s/km this week`:`Targets tightened ${adapt.adj}s/km this week`}
+        </div>
+        <div style={{fontSize:12,color:"#a0a0b8"}}>{adapt.why}</div>
+      </div>
+    </div>
+  );
+}
+
+function GarminStep({ step, indent }) {
+  const c = STEP_C[step.type]||STEP_C.run;
+  return (
+    <div style={{marginLeft:indent?20:0,marginBottom:5}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:8,background:c.bg,borderLeft:`2px solid ${c.border}`,padding:"8px 10px",borderRadius:"0 3px 3px 0"}}>
+        <span style={{color:c.text,fontSize:11,flexShrink:0,marginTop:1}}>{c.icon}</span>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
+            <span style={{fontSize:12,fontWeight:700,color:"#f0f0fa"}}>{step.label}</span>
+            <span style={{fontSize:11,fontFamily:"monospace",color:c.text}}>{step.value}</span>
+            {step.pace&&<span style={{fontSize:10,color:"#c0c0d8",fontFamily:"monospace"}}>@ {step.pace}</span>}
+          </div>
+          {step.note&&<div style={{fontSize:11,color:"#9090a8",marginTop:2,lineHeight:1.5}}>{step.note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GarminPanel({ garmin }) {
+  const [open,setOpen] = useState(false);
+  if (!garmin) return null;
+  return (
+    <div style={{marginTop:14,borderTop:"1px solid #1a1a22",paddingTop:12}}>
+      <button onClick={()=>setOpen(!open)} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:"none",cursor:"pointer",padding:0,width:"100%"}}>
+        <span style={{fontSize:10,color:"#4a9eff",fontFamily:"monospace"}}>⌚</span>
+        <span style={{fontSize:10,fontWeight:700,color:"#8888a0",letterSpacing:"1px",fontFamily:"monospace",textTransform:"uppercase"}}>
+          Garmin Workout Setup
+        </span>
+        <span style={{marginLeft:"auto",fontSize:10,color:"#404050"}}>{open?"▲":"▼"}</span>
+      </button>
+      {open&&(
+        <div style={{marginTop:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:"rgba(74,158,255,0.05)",border:"1px solid rgba(74,158,255,0.15)",borderRadius:4,padding:"8px 10px"}}>
+            <span style={{fontSize:9,color:"#4a9eff",fontFamily:"monospace",letterSpacing:"1px"}}>SAVE AS</span>
+            <span style={{fontSize:12,fontFamily:"monospace",color:"#f0f0fa",fontWeight:700}}>{garmin.name}</span>
+          </div>
+          <div style={{fontSize:10,color:"#606070",fontFamily:"monospace",marginBottom:10,lineHeight:1.7}}>
+            Menu → Training → Workouts → Create Workout → Running
+          </div>
+          <div>
+            {garmin.steps.map((step,i)=>(
+              step.type==="repeat"?(
+                <div key={i} style={{marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    <span style={{fontSize:9,fontFamily:"monospace",color:"#d4a843",background:"rgba(212,168,67,0.1)",border:"1px solid rgba(212,168,67,0.25)",padding:"2px 7px",borderRadius:2}}>
+                      ↺ REPEAT ×{step.count}
+                    </span>
+                    <span style={{fontSize:9,color:"#606070",fontFamily:"monospace"}}>set repeat count to {step.count}</span>
+                  </div>
+                  {step.children.map((child,j)=><GarminStep key={j} step={child} indent={true}/>)}
+                </div>
+              ):<GarminStep key={i} step={step} indent={false}/>
+            ))}
+          </div>
+          <div style={{marginTop:10,fontSize:10,color:"#505060",lineHeight:1.6,fontStyle:"italic"}}>
+            Tip: Set auto-lap to 1km so you get split alerts. Enable pace alerts ±10s around target.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Sparkline({ logs }) {
+  const pts = [];
+  for (let w=1;w<=10;w++) {
+    const b=WEEK_PLAN[w]; if(!b) continue;
+    b.sessions.forEach(s=>{
+      const lg=logs[`w${w}_${s.id}`]||{};
+      const p=parseSecs(lg.pace);
+      if(p) pts.push({w,pace:p,target:s.basePaceMid});
+    });
+  }
+  if (pts.length<2) return (
+    <div style={{padding:"14px 0",fontSize:11,color:"#606070",fontFamily:"monospace",textAlign:"center"}}>
+      Log pace in sessions to see your trend here
+    </div>
+  );
+  const W=300,H=72,pad=4;
+  const allP=[...pts.map(p=>p.pace),270,430];
+  const mn=Math.min(...allP)-8,mx=Math.max(...allP)+8;
+  const y=p=>H-((p-mn)/(mx-mn))*H;
+  const x=i=>(i/(pts.length-1))*(W-pad*2)+pad;
+  const goalY=y(288);
+  const d=pts.map((p,i)=>`${i===0?"M":"L"}${x(i).toFixed(1)},${y(p.pace).toFixed(1)}`).join(" ");
+  return (
+    <div style={{marginBottom:20}}>
+      <div style={{fontSize:8,color:"#606070",fontFamily:"monospace",letterSpacing:"1.5px",marginBottom:8}}>PACE TREND vs 4:48 GOAL</div>
+      <svg width={W} height={H+22} style={{overflow:"visible",display:"block"}}>
+        <line x1={0} y1={goalY} x2={W} y2={goalY} stroke="#3db87a" strokeWidth={1} strokeDasharray="3,3" opacity={0.4}/>
+        <text x={W+4} y={goalY+4} fill="#3db87a" fontSize={8} fontFamily="monospace" opacity={0.6}>4:48</text>
+        <path d={d} fill="none" stroke="#e83a3a" strokeWidth={1.5} opacity={0.65}/>
+        {pts.map((pt,i)=>(
+          <circle key={i} cx={x(i)} cy={y(pt.pace)} r={3}
+            fill={pt.pace<=pt.target+10?"#3db87a":pt.pace<=pt.target+25?"#d4a843":"#e83a3a"} opacity={0.9}/>
+        ))}
+        {pts.map((pt,i)=>(
+          <text key={i} x={x(i)} y={H+16} fill="#606070" fontSize={7} fontFamily="monospace" textAnchor="middle">W{pt.w}</text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function Card({ session, weekKey, logs, onLog, isOpt=false, optOn, onToggleOpt, adaptAdj }) {
+  const [open,setOpen] = useState(false);
+  const [editPace,setEditPace] = useState(false);
+  const [editNote,setEditNote] = useState(false);
+  const [pv,setPv] = useState("");
+  const [nv,setNv] = useState("");
+  const lk = `${weekKey}_${session.id}`;
+  const log = logs[lk]||{};
+  const done = !!log.done;
+  const ap = adaptAdj&&session.basePaceTarget!=="Easy jog"
+    ? adaptPaceLabel(session.basePaceTarget,adaptAdj)
+    : {label:session.basePaceTarget,shifted:false};
+
+  if (isOpt&&!optOn) return (
+    <div onClick={onToggleOpt} style={{border:"1px dashed #1c1c24",borderRadius:6,padding:"11px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,opacity:0.5}}
+      onMouseEnter={e=>{e.currentTarget.style.opacity="0.85";e.currentTarget.style.borderColor="#4a9eff";}}
+      onMouseLeave={e=>{e.currentTarget.style.opacity="0.5";e.currentTarget.style.borderColor="#1c1c24";}}>
+      <span style={{fontSize:12,color:"#4a9eff"}}>+</span>
+      <span style={{fontSize:9,color:"#707088",fontFamily:"monospace",letterSpacing:"1px"}}>ADD OPTIONAL SESSION</span>
+      <span style={{marginLeft:"auto",fontSize:9,color:"#404050",fontFamily:"monospace"}}>tap to unlock</span>
+    </div>
+  );
+
+  return (
+    <div style={{border:`1px solid ${done?"rgba(61,184,122,0.25)":isOpt?"rgba(74,158,255,0.15)":"#181820"}`,borderRadius:6,background:"#0b0b0e",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",left:0,top:0,bottom:0,width:2,background:done?"#3db87a":isOpt?"rgba(74,158,255,0.4)":((INT[session.intensity]?.dot||"#444")+"44")}}/>
+
+      {/* Header */}
+      <div style={{padding:"12px 12px 10px 17px",display:"flex",gap:10,alignItems:"flex-start"}}>
+        <button onClick={()=>onLog(lk,{...log,done:!done,doneAt:!done?new Date().toISOString():null})} style={{
+          width:20,height:20,borderRadius:"50%",flexShrink:0,marginTop:2,cursor:"pointer",
+          border:`1.5px solid ${done?"#3db87a":"#2a2a35"}`,background:done?"#3db87a":"transparent",
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+          {done&&<span style={{fontSize:8,fontWeight:900,color:"#09090b"}}>✓</span>}
+        </button>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:8,fontFamily:"monospace",color:"#606070",letterSpacing:"1.5px"}}>{session.day}</span>
+            <span style={{fontSize:8,color:"#2a2a35"}}>·</span>
+            <Pip type={session.intensity}/>
+            <span style={{fontSize:8,fontFamily:"monospace",color:"#404050",letterSpacing:"1px",marginLeft:"auto"}}>{session.type}</span>
+          </div>
+          <div style={{fontSize:14,fontWeight:700,color:done?"#3db87a":"#f0f0fa",letterSpacing:"-0.2px",marginBottom:5}}>{session.title}</div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,color:"#787890",fontFamily:"monospace"}}>⏱ {session.duration}</span>
+            <span style={{fontSize:11,fontFamily:"monospace",color:ap.shifted?(adaptAdj>0?"#d4a843":"#4a9eff"):"#787890"}}>
+              ⚡ {ap.label}
+              {ap.shifted&&<span style={{opacity:0.8,marginLeft:4,fontSize:10}}>{adaptAdj>0?`(+${adaptAdj}s eased)`:`(${adaptAdj}s pushed)`}</span>}
+            </span>
+            {log.rpe&&<span style={{fontSize:11,fontFamily:"monospace",color:log.rpe>=8?"#e83a3a":log.rpe>=6?"#d4a843":"#3db87a"}}>RPE {log.rpe}/10</span>}
+            {log.pace&&<span style={{fontSize:11,fontFamily:"monospace",color:"#c0c0d0"}}>{log.pace}/km</span>}
+          </div>
+        </div>
+        <button onClick={()=>setOpen(!open)} style={{background:"transparent",border:"none",cursor:"pointer",color:open?"#707080":"#303040",fontSize:10,padding:"3px",flexShrink:0,marginTop:2}}>
+          {open?"▲":"▼"}
+        </button>
+      </div>
+
+      {/* Expanded */}
+      {open&&(
+        <div style={{borderTop:"1px solid #111116",padding:"14px 17px"}}>
+          {["moderate","hard","race"].includes(session.intensity)&&(
+            <PreChecklist log={log} onLog={onLog} logKey={lk}/>
+          )}
+          <div style={{marginBottom:13}}>
+            {session.details.map((d,i)=>(
+              <div key={i} style={{display:"flex",gap:8,marginBottom:7}}>
+                <span style={{color:"#e83a3a",fontSize:9,marginTop:3,flexShrink:0}}>—</span>
+                <span style={{fontSize:13,color:"#c0c0d8",lineHeight:1.65}}>{d}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
+            {session.cues?.map((c,i)=>(
+              <span key={i} style={{fontSize:9,color:"#4a9eff",background:"rgba(74,158,255,0.08)",padding:"3px 8px",borderRadius:2,fontFamily:"monospace",letterSpacing:"0.5px"}}>{c}</span>
+            ))}
+          </div>
+          <div style={{marginBottom:14}}>
+            <RpeRow value={log.rpe||null} onChange={v=>onLog(lk,{...log,rpe:v})}/>
+          </div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            {editPace?(
+              <div style={{display:"flex",gap:4}}>
+                <input autoFocus value={pv} onChange={e=>setPv(e.target.value)} placeholder="e.g. 4:52"
+                  onKeyDown={e=>{if(e.key==="Enter"){onLog(lk,{...log,pace:pv});setEditPace(false);}}}
+                  style={{background:"#09090b",border:"1px solid #2a2a35",borderRadius:2,color:"#f0f0fa",padding:"5px 8px",fontSize:11,fontFamily:"monospace",width:96}}/>
+                <button onClick={()=>{onLog(lk,{...log,pace:pv});setEditPace(false);}} style={{background:"#3db87a",border:"none",borderRadius:2,color:"#09090b",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer"}}>SAVE</button>
+                <button onClick={()=>setEditPace(false)} style={{background:"transparent",border:"1px solid #222",borderRadius:2,color:"#888",fontSize:10,padding:"5px 8px",cursor:"pointer"}}>✕</button>
+              </div>
+            ):(
+              <button onClick={()=>{setPv(log.pace||"");setEditPace(true);}} style={{background:"transparent",border:"1px solid #1a1a20",borderRadius:2,color:log.pace?"#d4a843":"#505060",fontSize:10,fontFamily:"monospace",padding:"5px 10px",cursor:"pointer",letterSpacing:"0.5px"}}>
+                {log.pace?`⚡ ${log.pace}/km`:"+ LOG PACE"}
+              </button>
+            )}
+            {editNote?(
+              <div style={{display:"flex",gap:4,flex:1}}>
+                <input autoFocus value={nv} onChange={e=>setNv(e.target.value)} placeholder="How did it feel?"
+                  onKeyDown={e=>{if(e.key==="Enter"){onLog(lk,{...log,note:nv});setEditNote(false);}}}
+                  style={{background:"#09090b",border:"1px solid #2a2a35",borderRadius:2,color:"#f0f0fa",padding:"5px 8px",fontSize:11,flex:1,minWidth:0}}/>
+                <button onClick={()=>{onLog(lk,{...log,note:nv});setEditNote(false);}} style={{background:"#4a9eff",border:"none",borderRadius:2,color:"#09090b",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer"}}>SAVE</button>
+                <button onClick={()=>setEditNote(false)} style={{background:"transparent",border:"1px solid #222",borderRadius:2,color:"#888",fontSize:10,padding:"5px 8px",cursor:"pointer"}}>✕</button>
+              </div>
+            ):(
+              <button onClick={()=>{setNv(log.note||"");setEditNote(true);}} style={{background:"transparent",border:"1px solid #1a1a20",borderRadius:2,color:log.note?"#a0a0b8":"#505060",fontSize:10,padding:"5px 10px",cursor:"pointer",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"left"}}>
+                {log.note?`✎ ${log.note}`:"+ NOTE"}
+              </button>
+            )}
+          </div>
+          {done&&log.doneAt&&(
+            <div style={{fontSize:9,color:"#3db87a",fontFamily:"monospace",opacity:0.7,marginTop:9}}>
+              ✓ completed {new Date(log.doneAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+            </div>
+          )}
+          <GarminPanel garmin={session.garmin}/>
+          {isOpt&&(
+            <button onClick={onToggleOpt} style={{marginTop:12,background:"transparent",border:"none",color:"#404050",fontSize:9,cursor:"pointer",fontFamily:"monospace",letterSpacing:"0.5px",padding:0}}>
+              — remove optional session
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── INSTALL BANNER ────────────────────────────────────────────────────────────
+function InstallBanner() {
+  const [show, setShow] = useState(() => {
+    // Hide if already dismissed or running as standalone
+    if (window.matchMedia('(display-mode: standalone)').matches) return false;
+    if (navigator.standalone) return false;
+    return !localStorage.getItem('5k_banner_dismissed');
+  });
+  if (!show) return null;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  return (
+    <div style={{background:"rgba(212,168,67,0.08)",borderBottom:"1px solid rgba(212,168,67,0.2)",padding:"10px 16px",display:"flex",alignItems:"flex-start",gap:10}}>
+      <span style={{fontSize:14,flexShrink:0}}>📲</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#d4a843",marginBottom:2}}>Save to Home Screen</div>
+        {isIOS
+          ? <div style={{fontSize:10,color:"#a0a0b8",lineHeight:1.5}}>In Safari: tap the <strong style={{color:"#d4a843"}}>Share</strong> button → <strong style={{color:"#d4a843"}}>Add to Home Screen</strong></div>
+          : <div style={{fontSize:10,color:"#a0a0b8",lineHeight:1.5}}>Host free at <strong style={{color:"#d4a843"}}>netlify.com/drop</strong> — drag this file there, open the link in Chrome, then tap <strong style={{color:"#d4a843"}}>Install app</strong> in the browser menu</div>
+        }
+      </div>
+      <button onClick={()=>{setShow(false);localStorage.setItem('5k_banner_dismissed','1');}} style={{background:"transparent",border:"none",cursor:"pointer",color:"#505060",fontSize:14,flexShrink:0,padding:0}}>✕</button>
+    </div>
+  );
+}
+function App() {
+  const stored = loadData();
+  const [week,setWeek]   = useState(1);
+  const [logs,setLogs]   = useState(stored.logs||{});
+  const [optEna,setOptEna] = useState(stored.optional||{});
+  const [view,setView]   = useState("week");
+
+  const onLog = (key,val) => {
+    const n = {...logs,[key]:val};
+    setLogs(n);
+    saveData({logs:n,optional:optEna});
+  };
+  const toggleOpt = (wk) => {
+    const n = {...optEna,[wk]:!optEna[wk]};
+    setOptEna(n);
+    saveData({logs,optional:n});
+  };
+
+  const block = WEEK_PLAN[week];
+  const wk    = `w${week}`;
+  const adapt = calcAdapt(logs,week);
+  const adj   = adapt?.adj||0;
+  const wd    = w => {
+    const b=WEEK_PLAN[w]; if(!b) return {done:0,total:0};
+    return {done:b.sessions.filter(s=>logs[`w${w}_${s.id}`]?.done).length,total:b.sessions.length};
+  };
+  const sessTotal = Object.values(logs).filter(l=>l.done).length;
+  const streak    = calcStreak(logs);
+
+  return (
+    <div style={{background:"#09090b",minHeight:"100vh",fontFamily:"'Syne',sans-serif",color:"#f0f0fa"}}>
+      <InstallBanner/>
+
+      {/* TOP BAR */}
+      <div style={{borderBottom:"1px solid #111116",padding:"11px 16px",display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:14,fontWeight:800,letterSpacing:"-0.3px",color:"#f0f0fa"}}>5K</span>
+        <span style={{fontSize:8,color:"#e83a3a",fontFamily:"monospace",letterSpacing:"2.5px",fontWeight:700}}>TRAINING LOG</span>
+        <span style={{width:1,height:11,background:"#222"}}/>
+        <span style={{fontSize:8,color:"#606070",fontFamily:"monospace",letterSpacing:"1px"}}>GOAL 24:00</span>
+        {streak>=2&&(
+          <span style={{fontSize:8,fontFamily:"monospace",letterSpacing:"1px",color:"#d4a843",background:"rgba(212,168,67,0.1)",border:"1px solid rgba(212,168,67,0.25)",padding:"2px 8px",borderRadius:2}}>
+            🔥 {streak}W STREAK
+          </span>
+        )}
+        <div style={{marginLeft:"auto",display:"flex",gap:14}}>
+          {["week","overview"].map(v=>(
+            <button key={v} onClick={()=>setView(v)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:8,letterSpacing:"1.5px",fontFamily:"monospace",fontWeight:700,textTransform:"uppercase",color:view===v?"#f0f0fa":"#404050",borderBottom:view===v?"1px solid #e83a3a":"1px solid transparent",paddingBottom:2}}>{v}</button>
+          ))}
+        </div>
+      </div>
+
+      {view==="week"?(
+        <div style={{display:"flex",height:"calc(100vh - 44px)"}}>
+          {/* WEEK RAIL */}
+          <div style={{width:58,borderRight:"1px solid #111116",padding:"10px 5px",display:"flex",flexDirection:"column",gap:2,overflowY:"auto",flexShrink:0}}>
+            {Array.from({length:10},(_,i)=>i+1).map(w=>{
+              const {done,total}=wd(w); const on=w===week;
+              return (
+                <button key={w} className={`wb${on?" on":""}`} onClick={()=>setWeek(w)} style={{background:"transparent",border:"none",borderRadius:4,padding:"8px 0",cursor:"pointer",color:on?"#fff":done>0?"#3db87a":"#404050",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                  <span style={{fontFamily:"monospace",fontSize:10,fontWeight:700}}>W{w}</span>
+                  <div style={{display:"flex",gap:2}}>
+                    {Array.from({length:total}).map((_,i)=>(
+                      <div key={i} style={{width:4,height:4,borderRadius:"50%",background:i<done?(on?"rgba(255,255,255,0.85)":"#3db87a"):(on?"rgba(255,255,255,0.2)":"#1e1e26")}}/>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* MAIN */}
+          <div style={{flex:1,overflowY:"auto",padding:"16px 16px 48px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+              <div>
+                <div style={{display:"flex",gap:7,marginBottom:3,alignItems:"center"}}>
+                  <span style={{fontSize:8,fontFamily:"monospace",color:"#505060",letterSpacing:"1.5px"}}>{block.phase}</span>
+                  <span style={{fontSize:8,color:"#2a2a30"}}>—</span>
+                  <span style={{fontSize:8,fontFamily:"monospace",color:"#505060",letterSpacing:"1px"}}>
+                    {block.weeks.length>1?`WEEKS ${block.weeks[0]}–${block.weeks[block.weeks.length-1]}`:`WEEK ${block.weeks[0]}`}
+                  </span>
+                </div>
+                <h2 style={{fontSize:20,fontWeight:800,letterSpacing:"-0.3px",color:"#f0f0fa"}}>Week {week}</h2>
+                <p style={{fontSize:12,color:"#808098",marginTop:2}}>{block.phaseLabel}</p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                {(()=>{const {done,total}=wd(week);return(<>
+                  <div style={{fontSize:22,fontWeight:800,fontFamily:"monospace",color:done===total&&total>0?"#3db87a":"#f0f0fa"}}>{done}/{total}</div>
+                  <div style={{fontSize:7,color:"#505060",letterSpacing:"1px"}}>DONE</div>
+                </>);})()}
+              </div>
+            </div>
+
+            <AdaptNotice adapt={adapt}/>
+
+            <div style={{display:"flex",flexDirection:"column",gap:7}}>
+              {block.sessions.map(s=>(
+                <Card key={s.id} session={s} weekKey={wk} logs={logs} onLog={onLog} adaptAdj={adj}/>
+              ))}
+              {block.optional&&(
+                <Card key="opt" session={block.optional} weekKey={wk} logs={logs} onLog={onLog}
+                  isOpt={true} optOn={!!optEna[wk]} onToggleOpt={()=>toggleOpt(wk)} adaptAdj={0}/>
+              )}
+            </div>
+
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:22}}>
+              {[{d:-1,l:"← PREV"},{d:1,l:"NEXT →"}].map(({d,l})=>(
+                <button key={d} disabled={week+d<1||week+d>10} onClick={()=>setWeek(w=>w+d)}
+                  style={{background:"transparent",border:"1px solid #181820",borderRadius:4,color:"#505060",fontSize:8,fontFamily:"monospace",letterSpacing:"1px",padding:"7px 12px",cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.color="#a0a0b8"}
+                  onMouseLeave={e=>e.currentTarget.style.color="#505060"}>{l}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+      ):(
+        /* OVERVIEW */
+        <div style={{padding:"18px 18px 60px",maxWidth:600,margin:"0 auto"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:1,background:"#111116",border:"1px solid #111116",marginBottom:22}}>
+            {[["SESSIONS DONE",sessTotal,"#e83a3a"],
+              ["WEEKS ACTIVE",new Set(Object.keys(logs).filter(k=>logs[k].done).map(k=>k.split("_")[0])).size,"#d4a843"],
+              ["TARGET PACE","4:48/km","#3db87a"]].map(([l,v,c])=>(
+              <div key={l} style={{background:"#09090b",padding:"14px 12px"}}>
+                <div style={{fontSize:7,color:"#505060",fontFamily:"monospace",letterSpacing:"1.5px",marginBottom:5}}>{l}</div>
+                <div style={{fontSize:24,fontWeight:800,color:c,fontFamily:"monospace"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          <Sparkline logs={logs}/>
+
+          <div style={{display:"flex",flexDirection:"column",gap:2,marginBottom:22}}>
+            {Array.from({length:10},(_,i)=>i+1).map(w=>{
+              const b=WEEK_PLAN[w]; const {done,total}=wd(w); const pct=total>0?(done/total)*100:0; const on=w===week;
+              return (
+                <div key={w} onClick={()=>{setWeek(w);setView("week");}}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",background:on?"#0e0e12":"transparent",border:`1px solid ${on?"#1a1a22":"transparent"}`,borderRadius:4,cursor:"pointer"}}>
+                  <div style={{width:26,fontFamily:"monospace",fontSize:10,fontWeight:700,color:done===total&&total>0?"#3db87a":on?"#e83a3a":"#606070"}}>W{w}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#a0a0b8",marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.phaseLabel}</div>
+                    <div style={{height:2,background:"#141418",borderRadius:1,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${pct}%`,borderRadius:1,transition:"width 0.4s",background:pct===100?"#3db87a":"#e83a3a"}}/>
+                    </div>
+                  </div>
+                  <div style={{fontFamily:"monospace",fontSize:9,color:done>0?"#808090":"#303040",width:26,textAlign:"right"}}>{done}/{total}</div>
+                  {done===total&&total>0&&<span style={{color:"#3db87a",fontSize:9}}>✓</span>}
+                </div>
+              );
+            })}
+          </div>
+
+          {sessTotal>0&&(
+            <div style={{borderTop:"1px solid #111116",paddingTop:16}}>
+              <div style={{fontSize:7,color:"#505060",fontFamily:"monospace",letterSpacing:"1.5px",marginBottom:11}}>COMPLETED SESSIONS</div>
+              {Object.entries(logs).filter(([,v])=>v.done).map(([key,v])=>{
+                const [wk2,sid]=key.split("_"); const wn=parseInt(wk2.replace("w",""));
+                const b=WEEK_PLAN[wn]; const s=sid==="opt"?b?.optional:b?.sessions.find(s=>s.id===sid);
+                if(!s) return null;
+                return (
+                  <div key={key} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #0e0e11"}}>
+                    <span style={{fontFamily:"monospace",fontSize:9,color:"#3db87a"}}>✓</span>
+                    <span style={{fontFamily:"monospace",fontSize:9,color:"#606070",width:24}}>W{wn}</span>
+                    <span style={{fontSize:12,color:"#c0c0d0",flex:1}}>{s.title}</span>
+                    {v.rpe&&<span style={{fontFamily:"monospace",fontSize:9,color:v.rpe>=8?"#e83a3a":v.rpe>=6?"#d4a843":"#3db87a"}}>RPE {v.rpe}</span>}
+                    {v.pace&&<span style={{fontFamily:"monospace",fontSize:9,color:"#d4a843"}}>{v.pace}/km</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
